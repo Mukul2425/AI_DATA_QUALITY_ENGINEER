@@ -6,6 +6,9 @@ from alembic import context
 from app.core.config import get_settings
 from app.db.base import Base
 
+# Ensure models are imported so metadata is populated
+from app.models import user, dataset, validation_result, cleaning_job  # noqa: F401
+
 config = context.config
 
 if config.config_file_name is not None:
