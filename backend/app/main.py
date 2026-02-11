@@ -1,5 +1,8 @@
 from fastapi import FastAPI
 
+# Ensure all SQLAlchemy models are registered before first query
+import app.models  # noqa: F401
+
 from app.api.routes.health import router as health_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.datasets import router as datasets_router
