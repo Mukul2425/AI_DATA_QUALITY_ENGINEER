@@ -18,7 +18,7 @@ class ValidationResultOut(BaseModel):
     id: UUID
     dataset_id: UUID
     quality_score: int
-    issues_json: dict
+    issues_json: list[dict]
     profile_json: dict
     llm_summary: str | None = None
     created_at: datetime
