@@ -18,6 +18,7 @@ async function apiRequest(path, { method = "GET", token, body, isForm } = {}) {
     throw new Error(text || `Request failed: ${response.status}`);
   }
 
+  if (response.status === 204) return null;
   return response.json();
 }
 
@@ -45,7 +46,7 @@ export default function App() {
 
   async function loadDatasets() {
     try {
-      const data = await apiRequest("/datasets", { token });
+      const data = await apiRequest("/datasets/", { token });
       setDatasets(data);
       if (data.length && !selectedId) {
         setSelectedId(data[0].id);
@@ -171,6 +172,53 @@ export default function App() {
       });
       setReport(data);
       setStatus("Generated LLM summary and cleaning plan.");
+    } catch (err) {
+      setStatus(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runCleaning(datasetId) {
+    setBusy(true);
+    setStatus("");
+    try {
+      await apiRequest(`/datasets/${datasetId}/clean`, {
+        method: "POST",
+        token
+      });
+      await fetchReport(datasetId);
+      setStatus("Cleaning completed.");
+    } catch (err) {
+      setStatus(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function downloadCleaned(datasetId) {
+    setBusy(true);
+    setStatus("");
+    try {
+      const response = await fetch(`${API_URL}/datasets/${datasetId}/cleaned-file`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || "No cleaned file available");
+      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `cleaned-${datasetId}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      setStatus("Downloaded cleaned file.");
     } catch (err) {
       setStatus(err.message);
     } finally {
@@ -342,6 +390,20 @@ export default function App() {
                   disabled={busy}
                 >
                   Generate LLM Summary
+                </button>
+                <button
+                  className="rounded-full border border-slate-700 px-3 py-1 text-xs uppercase tracking-widest"
+                  onClick={() => runCleaning(selectedDataset.id)}
+                  disabled={busy}
+                >
+                  Run Cleaning
+                </button>
+                <button
+                  className="rounded-full border border-slate-700 px-3 py-1 text-xs uppercase tracking-widest"
+                  onClick={() => downloadCleaned(selectedDataset.id)}
+                  disabled={busy}
+                >
+                  Download Cleaned
                 </button>
               </div>
             )}
