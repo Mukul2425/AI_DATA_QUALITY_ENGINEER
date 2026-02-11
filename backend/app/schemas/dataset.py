@@ -21,6 +21,7 @@ class ValidationResultOut(BaseModel):
     issues_json: list[dict]
     profile_json: dict
     llm_summary: str | None = None
+    cleaning_plan_json: dict | None = None
     created_at: datetime
 
     class Config:

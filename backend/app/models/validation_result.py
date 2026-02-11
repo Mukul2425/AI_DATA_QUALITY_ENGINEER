@@ -16,6 +16,7 @@ class ValidationResult(Base):
     issues_json = Column(JSONB, nullable=False)
     profile_json = Column(JSONB, nullable=False)
     llm_summary = Column(Text, nullable=True)
+    cleaning_plan_json = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     dataset = relationship("Dataset", back_populates="validation_results")

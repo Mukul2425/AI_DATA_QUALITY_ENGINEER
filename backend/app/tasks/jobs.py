@@ -17,13 +17,17 @@ def process_dataset_task(dataset_id: str) -> str:
         dataset.status = "processing"
         db.commit()
 
-        profile, issues, score, llm_summary = run_validation(dataset.file_path, use_llm=True)
+        profile, issues, score, llm_summary, cleaning_plan = run_validation(
+            dataset.file_path,
+            use_llm=True,
+        )
         result = ValidationResult(
             dataset_id=dataset.id,
             quality_score=score,
             issues_json=issues,
             profile_json=profile,
             llm_summary=llm_summary,
+            cleaning_plan_json=cleaning_plan,
         )
         db.add(result)
         dataset.status = "done"

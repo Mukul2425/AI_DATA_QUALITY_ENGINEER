@@ -8,7 +8,9 @@ from app.core.config import get_settings
 from app.models.dataset import Dataset
 from app.models.validation_result import ValidationResult
 from app.schemas.dataset import DatasetOut, ValidationResultOut
+from app.services.llm import generate_cleaning_plan, summarize_issues
 from app.services.processing import run_validation
+from app.tasks.jobs import process_dataset_task
 from app.utils.files import save_upload_file
 
 settings = get_settings()
@@ -20,6 +22,7 @@ router = APIRouter(prefix="/datasets", tags=["datasets"])
 def upload_dataset(
     file: UploadFile = File(...),
     process: bool = True,
+    async_process: bool = False,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -44,8 +47,14 @@ def upload_dataset(
     db.commit()
     db.refresh(dataset)
 
+    if process and async_process:
+        dataset.status = "processing"
+        db.commit()
+        process_dataset_task.delay(str(dataset.id))
+        return dataset
+
     if process:
-        profile, issues, score, llm_summary = run_validation(file_path, use_llm=False)
+        profile, issues, score, llm_summary, cleaning_plan = run_validation(file_path, use_llm=False)
         dataset.status = "done"
         result = ValidationResult(
             dataset_id=dataset.id,
@@ -53,6 +62,7 @@ def upload_dataset(
             issues_json=issues,
             profile_json=profile,
             llm_summary=llm_summary,
+            cleaning_plan_json=cleaning_plan,
         )
         db.add(result)
         db.commit()
@@ -103,7 +113,7 @@ def process_dataset(
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    profile, issues, score, llm_summary = run_validation(dataset.file_path, use_llm=False)
+    profile, issues, score, llm_summary, cleaning_plan = run_validation(dataset.file_path, use_llm=False)
     dataset.status = "done"
     result = ValidationResult(
         dataset_id=dataset.id,
@@ -111,8 +121,59 @@ def process_dataset(
         issues_json=issues,
         profile_json=profile,
         llm_summary=llm_summary,
+        cleaning_plan_json=cleaning_plan,
     )
     db.add(result)
+    db.commit()
+    db.refresh(result)
+    return result
+
+
+@router.post("/{dataset_id}/process-async", response_model=DatasetOut)
+def process_dataset_async(
+    dataset_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    dataset = (
+        db.query(Dataset)
+        .filter(Dataset.id == dataset_id, Dataset.owner_id == current_user.id)
+        .first()
+    )
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    dataset.status = "processing"
+    db.commit()
+    process_dataset_task.delay(str(dataset.id))
+    return dataset
+
+
+@router.post("/{dataset_id}/explain", response_model=ValidationResultOut)
+def explain_dataset(
+    dataset_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    dataset = (
+        db.query(Dataset)
+        .filter(Dataset.id == dataset_id, Dataset.owner_id == current_user.id)
+        .first()
+    )
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    result = (
+        db.query(ValidationResult)
+        .filter(ValidationResult.dataset_id == dataset.id)
+        .order_by(ValidationResult.created_at.desc())
+        .first()
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="No report found")
+
+    result.llm_summary = summarize_issues(result.issues_json)
+    result.cleaning_plan_json = generate_cleaning_plan(result.issues_json)
     db.commit()
     db.refresh(result)
     return result
