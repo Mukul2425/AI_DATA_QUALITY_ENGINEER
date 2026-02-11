@@ -8,7 +8,10 @@ celery = Celery(
     "ai_data_quality",
     broker=settings.celery_broker_url,
     backend=settings.celery_result_backend,
+    include=["app.tasks.jobs"],
 )
+
+celery.autodiscover_tasks(["app.tasks"])
 
 celery.conf.update(
     task_serializer="json",
@@ -16,4 +19,5 @@ celery.conf.update(
     accept_content=["json"],
     timezone="UTC",
     enable_utc=True,
+    broker_connection_retry_on_startup=True,
 )
