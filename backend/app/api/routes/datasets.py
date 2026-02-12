@@ -177,16 +177,8 @@ def explain_dataset(
     if not result:
         raise HTTPException(status_code=404, detail="No report found")
 
-    llm_summary = summarize_issues(result.issues_json)
-    cleaning_plan = generate_cleaning_plan(result.issues_json)
-
-    if llm_summary is None and cleaning_plan is None:
-        raise HTTPException(status_code=429, detail="LLM rate limited or unavailable")
-
-    if llm_summary is not None:
-        result.llm_summary = llm_summary
-    if cleaning_plan is not None:
-        result.cleaning_plan_json = cleaning_plan
+    result.llm_summary = summarize_issues(result.issues_json)
+    result.cleaning_plan_json = generate_cleaning_plan(result.issues_json)
 
     db.commit()
     db.refresh(result)
@@ -213,8 +205,24 @@ def clean_dataset(
         .order_by(ValidationResult.created_at.desc())
         .first()
     )
-    if not result or not result.cleaning_plan_json:
-        raise HTTPException(status_code=400, detail="No cleaning plan available")
+    if not result:
+        profile, issues, score, llm_summary, cleaning_plan = run_validation(dataset.file_path, use_llm=False)
+        result = ValidationResult(
+            dataset_id=dataset.id,
+            quality_score=score,
+            issues_json=issues,
+            profile_json=profile,
+            llm_summary=llm_summary,
+            cleaning_plan_json=cleaning_plan,
+        )
+        db.add(result)
+        db.commit()
+        db.refresh(result)
+
+    if not result.cleaning_plan_json:
+        result.cleaning_plan_json = generate_cleaning_plan(result.issues_json)
+        db.commit()
+        db.refresh(result)
 
     job = CleaningJob(dataset_id=dataset.id, status="processing")
     db.add(job)

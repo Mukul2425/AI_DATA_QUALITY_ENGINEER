@@ -39,6 +39,14 @@ export default function App() {
     [datasets, selectedId]
   );
 
+  const stats = useMemo(() => {
+    const total = datasets.length;
+    const processing = datasets.filter((item) => item.status === "processing").length;
+    const failed = datasets.filter((item) => item.status === "failed").length;
+    const latestScore = report?.quality_score ?? "--";
+    return { total, processing, failed, latestScore };
+  }, [datasets, report]);
+
   useEffect(() => {
     if (!token) return;
     loadDatasets();
@@ -171,7 +179,7 @@ export default function App() {
         token
       });
       setReport(data);
-      setStatus("Generated LLM summary and cleaning plan.");
+      setStatus("Generated summary + cleaning plan.");
     } catch (err) {
       setStatus(err.message);
     } finally {
@@ -228,24 +236,50 @@ export default function App() {
 
   return (
     <div className="min-h-screen text-slate-100">
-      <header className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-10">
-        <div>
+      <header className="mx-auto max-w-6xl px-6 pt-12">
+        <div className="rounded-[32px] border border-slate-800 bg-slate-900/60 p-10">
           <p className="text-xs uppercase tracking-[0.3em] text-emerald-300/80">AI Data Quality Engineer</p>
-          <h1 className="mt-3 text-4xl font-semibold">Production-grade data quality intelligence</h1>
-          <p className="mt-3 max-w-xl text-slate-300">
-            Profile datasets, surface issues, and generate safe cleaning plans with Gemini-powered reasoning.
+          <h1 className="mt-4 text-4xl font-semibold leading-tight md:text-5xl">
+            GenAI data quality control room
+          </h1>
+          <p className="mt-4 max-w-2xl text-base text-slate-300">
+            Profile datasets, surface anomalies, and execute safe cleaning workflows backed by Gemini reasoning.
           </p>
-        </div>
-        <div className="flex items-center gap-3 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-5 py-2 text-xs uppercase tracking-widest text-emerald-200">
-          {token ? "Connected" : "Offline"}
+          <div className="mt-6 flex flex-wrap gap-3 text-xs uppercase tracking-widest">
+            <span className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-4 py-2 text-emerald-200">
+              {token ? "Connected" : "Offline"}
+            </span>
+            <span className="rounded-full border border-slate-700 bg-slate-950/40 px-4 py-2 text-slate-300">
+              API: {API_URL}
+            </span>
+          </div>
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-6xl gap-8 px-6 pb-16 lg:grid-cols-[0.9fr,1.1fr]">
+      <section className="mx-auto grid max-w-6xl gap-4 px-6 py-8 md:grid-cols-4">
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
+          <p className="text-xs uppercase tracking-widest text-slate-400">Datasets</p>
+          <p className="mt-3 text-3xl font-semibold text-emerald-200">{stats.total}</p>
+        </div>
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
+          <p className="text-xs uppercase tracking-widest text-slate-400">Processing</p>
+          <p className="mt-3 text-3xl font-semibold text-amber-200">{stats.processing}</p>
+        </div>
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
+          <p className="text-xs uppercase tracking-widest text-slate-400">Failed</p>
+          <p className="mt-3 text-3xl font-semibold text-rose-200">{stats.failed}</p>
+        </div>
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
+          <p className="text-xs uppercase tracking-widest text-slate-400">Latest Score</p>
+          <p className="mt-3 text-3xl font-semibold text-blue-200">{stats.latestScore}</p>
+        </div>
+      </section>
+
+      <main className="mx-auto grid max-w-6xl gap-8 px-6 pb-16 lg:grid-cols-[1.1fr,1.3fr]">
         <section className="space-y-6">
           <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Authentication</h2>
+              <h2 className="text-lg font-semibold">Access</h2>
               {token && (
                 <button
                   className="rounded-full border border-slate-700 px-4 py-1 text-xs uppercase tracking-widest"
@@ -308,7 +342,7 @@ export default function App() {
           </div>
 
           <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
-            <h2 className="text-lg font-semibold">Upload Dataset</h2>
+            <h2 className="text-lg font-semibold">Ingest</h2>
             <p className="mt-2 text-sm text-slate-400">CSV only. Sync validation runs immediately.</p>
             <form onSubmit={handleUpload} className="mt-4 space-y-3">
               <input
@@ -325,6 +359,17 @@ export default function App() {
                 Upload + Validate
               </button>
             </form>
+          </div>
+
+          <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+            <h2 className="text-lg font-semibold">Pipeline</h2>
+            <ol className="mt-3 space-y-2 text-sm text-slate-300">
+              <li>1. Upload dataset</li>
+              <li>2. Run validation and profiling</li>
+              <li>3. Generate LLM explanation + plan</li>
+              <li>4. Execute cleaning</li>
+              <li>5. Download cleaned CSV</li>
+            </ol>
           </div>
 
           {status && (
