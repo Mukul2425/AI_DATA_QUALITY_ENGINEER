@@ -10,9 +10,18 @@
   --panel: #111827;
   --accent: #34d399;
   --accent-2: #60a5fa;
+  --glow: rgba(52, 211, 153, 0.15);
 }
 
 body {
   font-family: "Space Grotesk", system-ui, sans-serif;
   background: radial-gradient(circle at top left, #111827 0%, #0b0f1a 45%, #05070f 100%);
+  min-height: 100vh;
+}
+
+.bg-grid {
+  background-image:
+    linear-gradient(to right, rgba(148, 163, 184, 0.08) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(148, 163, 184, 0.08) 1px, transparent 1px);
+  background-size: 80px 80px;
 }

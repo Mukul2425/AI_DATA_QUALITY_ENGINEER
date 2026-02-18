@@ -235,10 +235,11 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen text-slate-100">
+    <div className="min-h-screen bg-grid text-slate-100">
       <header className="mx-auto max-w-6xl px-6 pt-12">
-        <div className="rounded-[32px] border border-slate-800 bg-slate-900/60 p-10">
-          <p className="text-xs uppercase tracking-[0.3em] text-emerald-300/80">AI Data Quality Engineer</p>
+        <div className="relative overflow-hidden rounded-[36px] border border-slate-800 bg-slate-900/60 p-10">
+          <div className="absolute -top-12 right-6 h-40 w-40 rounded-full bg-emerald-400/20 blur-3xl" />
+          <p className="text-xs uppercase tracking-[0.35em] text-emerald-300/80">AI Data Quality Engineer</p>
           <h1 className="mt-4 text-4xl font-semibold leading-tight md:text-5xl">
             GenAI data quality control room
           </h1>
