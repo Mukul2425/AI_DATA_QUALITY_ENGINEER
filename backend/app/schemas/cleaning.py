@@ -7,6 +7,7 @@ class CleaningJobOut(BaseModel):
     id: UUID
     dataset_id: UUID
     status: str
+    created_at: datetime | None = None
     cleaned_file_path: str | None = None
     completed_at: datetime | None = None
 

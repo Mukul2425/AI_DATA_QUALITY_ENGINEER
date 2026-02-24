@@ -15,9 +15,16 @@ class UserCreate(BaseModel):
         return value
 
 
+class UserUpdate(BaseModel):
+    full_name: str | None = None
+    organization: str | None = None
+
+
 class UserOut(BaseModel):
     id: UUID
     email: EmailStr
+    full_name: str | None = None
+    organization: str | None = None
     is_active: bool
     created_at: datetime
 

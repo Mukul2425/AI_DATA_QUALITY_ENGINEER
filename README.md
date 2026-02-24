@@ -41,12 +41,19 @@ A production-grade GenAI data quality platform that profiles datasets, runs rule
   - `POST /auth/register`
   - `POST /auth/login`
 - Datasets
-  - `POST /datasets/upload?process=true`
+  - `POST /datasets/upload?process=true&async_process=false`
   - `POST /datasets/{id}/process-async`
   - `POST /datasets/{id}/explain`
   - `POST /datasets/{id}/clean`
+  - `POST /datasets/{id}/clean-async`
+  - `GET /datasets/{id}/cleaning-latest`
   - `GET /datasets/{id}/cleaned-file`
   - `GET /datasets/{id}/report`
+  - `GET /datasets/{id}/report.json`
+  - `GET /datasets/{id}/report.csv`
+- Users
+  - `GET /users/me`
+  - `PUT /users/me`
 
 ## Deployment (Railway)
 1. Push to GitHub (already wired)

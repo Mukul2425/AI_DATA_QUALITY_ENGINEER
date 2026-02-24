@@ -22,6 +22,25 @@ async function apiRequest(path, { method = "GET", token, body, isForm } = {}) {
   return response.json();
 }
 
+function formatDate(value) {
+  if (!value) return "--";
+  try {
+    return new Date(value).toLocaleString();
+  } catch {
+    return value;
+  }
+}
+
+function statusBadge(status) {
+  const styles = {
+    uploaded: "bg-slate-900/50 text-slate-200 border-slate-700",
+    processing: "bg-amber-400/10 text-amber-200 border-amber-300/30",
+    done: "bg-emerald-400/10 text-emerald-200 border-emerald-300/30",
+    failed: "bg-rose-400/10 text-rose-200 border-rose-300/30"
+  };
+  return styles[status] || "bg-slate-900/50 text-slate-200 border-slate-700";
+}
+
 export default function App() {
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
@@ -30,8 +49,12 @@ export default function App() {
   const [datasets, setDatasets] = useState([]);
   const [selectedId, setSelectedId] = useState("");
   const [report, setReport] = useState(null);
+  const [cleaningJob, setCleaningJob] = useState(null);
+  const [me, setMe] = useState(null);
+  const [profileForm, setProfileForm] = useState({ full_name: "", organization: "" });
   const [status, setStatus] = useState("");
   const [file, setFile] = useState(null);
+  const [uploadAsync, setUploadAsync] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const selectedDataset = useMemo(
@@ -47,10 +70,53 @@ export default function App() {
     return { total, processing, failed, latestScore };
   }, [datasets, report]);
 
+  const issueCounts = useMemo(() => {
+    const issues = report?.issues_json || [];
+    const counts = {};
+    issues.forEach((issue) => {
+      const key = issue.type || "issue";
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  }, [report]);
+
+  const topNulls = useMemo(() => {
+    const nullPct = report?.profile_json?.null_pct || {};
+    return Object.entries(nullPct)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6);
+  }, [report]);
+
+  const planSteps = useMemo(() => {
+    const plan = report?.cleaning_plan_json;
+    if (!plan) return [];
+    if (Array.isArray(plan.steps)) return plan.steps;
+    return [];
+  }, [report]);
+
   useEffect(() => {
     if (!token) return;
     loadDatasets();
+    loadMe();
   }, [token]);
+
+  useEffect(() => {
+    if (!token || !selectedId) return;
+    fetchReport(selectedId);
+    fetchCleaningJob(selectedId);
+  }, [token, selectedId]);
+
+  useEffect(() => {
+    if (!token) return;
+    const interval = setInterval(() => {
+      loadDatasets();
+      if (selectedId) {
+        fetchReport(selectedId);
+        fetchCleaningJob(selectedId);
+      }
+    }, 8000);
+    return () => clearInterval(interval);
+  }, [token, selectedId]);
 
   async function loadDatasets() {
     try {
@@ -59,6 +125,22 @@ export default function App() {
       if (data.length && !selectedId) {
         setSelectedId(data[0].id);
       }
+      if (!data.find((item) => item.id === selectedId)) {
+        setSelectedId(data[0]?.id || "");
+      }
+    } catch (err) {
+      setStatus(err.message);
+    }
+  }
+
+  async function loadMe() {
+    try {
+      const data = await apiRequest("/users/me", { token });
+      setMe(data);
+      setProfileForm({
+        full_name: data.full_name || "",
+        organization: data.organization || ""
+      });
     } catch (err) {
       setStatus(err.message);
     }
@@ -112,6 +194,26 @@ export default function App() {
     setDatasets([]);
     setSelectedId("");
     setReport(null);
+    setMe(null);
+  }
+
+  async function handleProfileSave(event) {
+    event.preventDefault();
+    setBusy(true);
+    setStatus("");
+    try {
+      const data = await apiRequest("/users/me", {
+        method: "PUT",
+        token,
+        body: profileForm
+      });
+      setMe(data);
+      setStatus("Profile updated.");
+    } catch (err) {
+      setStatus(err.message);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function handleUpload(event) {
@@ -122,7 +224,8 @@ export default function App() {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      await apiRequest("/datasets/upload?process=true", {
+      const query = `/datasets/upload?process=true&async_process=${uploadAsync ? "true" : "false"}`;
+      await apiRequest(query, {
         method: "POST",
         token,
         body: formData,
@@ -140,16 +243,21 @@ export default function App() {
 
   async function fetchReport(datasetId) {
     if (!datasetId) return;
-    setBusy(true);
-    setStatus("");
     try {
       const data = await apiRequest(`/datasets/${datasetId}/report`, { token });
       setReport(data);
     } catch (err) {
       setReport(null);
-      setStatus(err.message);
-    } finally {
-      setBusy(false);
+    }
+  }
+
+  async function fetchCleaningJob(datasetId) {
+    if (!datasetId) return;
+    try {
+      const data = await apiRequest(`/datasets/${datasetId}/cleaning-latest`, { token });
+      setCleaningJob(data);
+    } catch {
+      setCleaningJob(null);
     }
   }
 
@@ -191,12 +299,12 @@ export default function App() {
     setBusy(true);
     setStatus("");
     try {
-      await apiRequest(`/datasets/${datasetId}/clean`, {
+      await apiRequest(`/datasets/${datasetId}/clean-async`, {
         method: "POST",
         token
       });
-      await fetchReport(datasetId);
-      setStatus("Cleaning completed.");
+      await fetchCleaningJob(datasetId);
+      setStatus("Cleaning queued.");
     } catch (err) {
       setStatus(err.message);
     } finally {
@@ -204,28 +312,32 @@ export default function App() {
     }
   }
 
+  async function downloadBlob(path, filename) {
+    const response = await fetch(`${API_URL}${path}`, {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(text || "Download failed");
+    }
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  }
+
   async function downloadCleaned(datasetId) {
     setBusy(true);
     setStatus("");
     try {
-      const response = await fetch(`${API_URL}/datasets/${datasetId}/cleaned-file`, {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      });
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || "No cleaned file available");
-      }
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `cleaned-${datasetId}.csv`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
+      await downloadBlob(`/datasets/${datasetId}/cleaned-file`, `cleaned-${datasetId}.csv`);
       setStatus("Downloaded cleaned file.");
     } catch (err) {
       setStatus(err.message);
@@ -234,53 +346,113 @@ export default function App() {
     }
   }
 
+  async function downloadReport(datasetId, format) {
+    setBusy(true);
+    setStatus("");
+    try {
+      await downloadBlob(`/datasets/${datasetId}/report.${format}`, `report-${datasetId}.${format}`);
+      setStatus(`Downloaded report (${format}).`);
+    } catch (err) {
+      setStatus(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function renderNullChart() {
+    if (!topNulls.length) {
+      return <p className="text-sm text-slate-400">No profiling data available yet.</p>;
+    }
+
+    return (
+      <div className="space-y-3">
+        {topNulls.map(([col, value]) => {
+          const pct = Math.round(value * 100);
+          return (
+            <div key={col} className="space-y-1">
+              <div className="flex justify-between text-xs text-slate-300">
+                <span>{col}</span>
+                <span>{pct}% nulls</span>
+              </div>
+              <div className="h-2 w-full rounded-full bg-slate-800">
+                <div
+                  className="h-2 rounded-full bg-emerald-400/70"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  const qualityScore = report?.quality_score ?? null;
+  const scoreTone = qualityScore === null
+    ? "text-slate-400"
+    : qualityScore >= 85
+      ? "text-emerald-200"
+      : qualityScore >= 70
+        ? "text-amber-200"
+        : "text-rose-200";
+
   return (
     <div className="min-h-screen bg-grid text-slate-100">
-      <header className="mx-auto max-w-6xl px-6 pt-12">
+      <header className="mx-auto max-w-7xl px-6 pt-10">
         <div className="relative overflow-hidden rounded-[36px] border border-slate-800 bg-slate-900/60 p-10">
-          <div className="absolute -top-12 right-6 h-40 w-40 rounded-full bg-emerald-400/20 blur-3xl" />
+          <div className="absolute -top-10 right-0 h-44 w-44 rounded-full bg-emerald-400/20 blur-3xl" />
+          <div className="absolute -bottom-16 left-6 h-48 w-48 rounded-full bg-sky-400/10 blur-3xl" />
           <p className="text-xs uppercase tracking-[0.35em] text-emerald-300/80">AI Data Quality Engineer</p>
           <h1 className="mt-4 text-4xl font-semibold leading-tight md:text-5xl">
-            GenAI data quality control room
+            Data quality control room for revenue-critical pipelines
           </h1>
           <p className="mt-4 max-w-2xl text-base text-slate-300">
-            Profile datasets, surface anomalies, and execute safe cleaning workflows backed by Gemini reasoning.
+            Ingest CSVs, profile quality risks, and orchestrate safe cleaning steps with Gemini-powered reasoning and automated guardrails.
           </p>
           <div className="mt-6 flex flex-wrap gap-3 text-xs uppercase tracking-widest">
-            <span className="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-4 py-2 text-emerald-200">
+            <span className={`rounded-full border px-4 py-2 ${token ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-200" : "border-slate-700 bg-slate-950/40 text-slate-300"}`}>
               {token ? "Connected" : "Offline"}
             </span>
             <span className="rounded-full border border-slate-700 bg-slate-950/40 px-4 py-2 text-slate-300">
               API: {API_URL}
             </span>
+            {selectedDataset && (
+              <span className={`rounded-full border px-4 py-2 ${statusBadge(selectedDataset.status)}`}>
+                {selectedDataset.status}
+              </span>
+            )}
           </div>
         </div>
       </header>
 
-      <section className="mx-auto grid max-w-6xl gap-4 px-6 py-8 md:grid-cols-4">
+      <section className="mx-auto grid max-w-7xl gap-4 px-6 py-8 md:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
           <p className="text-xs uppercase tracking-widest text-slate-400">Datasets</p>
           <p className="mt-3 text-3xl font-semibold text-emerald-200">{stats.total}</p>
+          <p className="mt-1 text-xs text-slate-400">Tracked in your workspace</p>
         </div>
         <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
           <p className="text-xs uppercase tracking-widest text-slate-400">Processing</p>
           <p className="mt-3 text-3xl font-semibold text-amber-200">{stats.processing}</p>
+          <p className="mt-1 text-xs text-slate-400">Async jobs running</p>
         </div>
         <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
           <p className="text-xs uppercase tracking-widest text-slate-400">Failed</p>
           <p className="mt-3 text-3xl font-semibold text-rose-200">{stats.failed}</p>
+          <p className="mt-1 text-xs text-slate-400">Needs attention</p>
         </div>
         <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
           <p className="text-xs uppercase tracking-widest text-slate-400">Latest Score</p>
-          <p className="mt-3 text-3xl font-semibold text-blue-200">{stats.latestScore}</p>
+          <p className={`mt-3 text-3xl font-semibold ${scoreTone}`}>{stats.latestScore}</p>
+          <p className="mt-1 text-xs text-slate-400">Quality index</p>
         </div>
       </section>
 
-      <main className="mx-auto grid max-w-6xl gap-8 px-6 pb-16 lg:grid-cols-[1.1fr,1.3fr]">
+      <main className="mx-auto grid max-w-7xl gap-8 px-6 pb-16 xl:grid-cols-[1fr,1.5fr]">
         <section className="space-y-6">
           <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Access</h2>
+              <h2 className="text-lg font-semibold">Operator Access</h2>
               {token && (
                 <button
                   className="rounded-full border border-slate-700 px-4 py-1 text-xs uppercase tracking-widest"
@@ -338,20 +510,62 @@ export default function App() {
               </form>
             )}
             {token && (
-              <p className="mt-4 text-sm text-emerald-200">Authenticated. Ready to upload datasets.</p>
+              <p className="mt-4 text-sm text-emerald-200">Authenticated. Your workspace is live.</p>
             )}
           </div>
 
+          {token && (
+            <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+              <h2 className="text-lg font-semibold">Profile</h2>
+              <form onSubmit={handleProfileSave} className="mt-4 space-y-3">
+                <input
+                  className="w-full rounded-2xl border border-slate-700 bg-slate-950/50 px-4 py-2 text-sm"
+                  placeholder="Full name"
+                  value={profileForm.full_name}
+                  onChange={(event) =>
+                    setProfileForm((prev) => ({ ...prev, full_name: event.target.value }))
+                  }
+                />
+                <input
+                  className="w-full rounded-2xl border border-slate-700 bg-slate-950/50 px-4 py-2 text-sm"
+                  placeholder="Organization"
+                  value={profileForm.organization}
+                  onChange={(event) =>
+                    setProfileForm((prev) => ({ ...prev, organization: event.target.value }))
+                  }
+                />
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="w-full rounded-2xl bg-slate-800 py-2 text-xs uppercase tracking-widest text-slate-200"
+                >
+                  Save Profile
+                </button>
+              </form>
+              {me && (
+                <p className="mt-3 text-xs text-slate-400">Logged in as {me.email}</p>
+              )}
+            </div>
+          )}
+
           <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
-            <h2 className="text-lg font-semibold">Ingest</h2>
-            <p className="mt-2 text-sm text-slate-400">CSV only. Sync validation runs immediately.</p>
-            <form onSubmit={handleUpload} className="mt-4 space-y-3">
+            <h2 className="text-lg font-semibold">Ingest Dataset</h2>
+            <p className="mt-2 text-sm text-slate-400">CSV only. Run validation now or queue async.</p>
+            <form onSubmit={handleUpload} className="mt-4 space-y-4">
               <input
                 type="file"
                 accept=".csv"
                 onChange={(event) => setFile(event.target.files?.[0] || null)}
                 className="w-full rounded-2xl border border-dashed border-slate-700 bg-slate-950/50 px-4 py-3 text-sm"
               />
+              <label className="flex items-center justify-between rounded-2xl border border-slate-800 bg-slate-950/40 px-4 py-3 text-xs uppercase tracking-widest">
+                <span>Async processing</span>
+                <input
+                  type="checkbox"
+                  checked={uploadAsync}
+                  onChange={(event) => setUploadAsync(event.target.checked)}
+                />
+              </label>
               <button
                 type="submit"
                 disabled={!token || busy || !file}
@@ -363,13 +577,15 @@ export default function App() {
           </div>
 
           <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
-            <h2 className="text-lg font-semibold">Pipeline</h2>
-            <ol className="mt-3 space-y-2 text-sm text-slate-300">
-              <li>1. Upload dataset</li>
-              <li>2. Run validation and profiling</li>
-              <li>3. Generate LLM explanation + plan</li>
-              <li>4. Execute cleaning</li>
-              <li>5. Download cleaned CSV</li>
+            <h2 className="text-lg font-semibold">Operational Runbook</h2>
+            <p className="mt-2 text-sm text-slate-400">
+              Recommended flow for a complete quality cycle.
+            </p>
+            <ol className="mt-4 space-y-2 text-sm text-slate-300">
+              <li>1. Upload a CSV and run validation.</li>
+              <li>2. Generate an LLM summary + cleaning plan.</li>
+              <li>3. Queue cleaning and download the output.</li>
+              <li>4. Share the JSON/CSV report with stakeholders.</li>
             </ol>
           </div>
 
@@ -383,7 +599,7 @@ export default function App() {
         <section className="space-y-6">
           <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Datasets</h2>
+              <h2 className="text-lg font-semibold">Dataset Control</h2>
               <button
                 className="rounded-full border border-slate-700 px-3 py-1 text-xs uppercase tracking-widest"
                 onClick={loadDatasets}
@@ -403,49 +619,44 @@ export default function App() {
                     setSelectedId(dataset.id);
                     fetchReport(dataset.id);
                   }}
-                  className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left text-sm ${
+                  className={`flex w-full flex-wrap items-center justify-between gap-2 rounded-2xl border px-4 py-3 text-left text-sm ${
                     selectedId === dataset.id
                       ? "border-emerald-400/50 bg-emerald-400/10"
                       : "border-slate-800 bg-slate-950/40"
                   }`}
                 >
                   <span>{dataset.filename}</span>
-                  <span className="text-xs uppercase tracking-widest text-slate-400">{dataset.status}</span>
+                  <span className={`rounded-full border px-3 py-1 text-xs uppercase tracking-widest ${statusBadge(dataset.status)}`}>
+                    {dataset.status}
+                  </span>
                 </button>
               ))}
             </div>
             {selectedDataset && (
-              <div className="mt-4 flex flex-wrap gap-2">
+              <div className="mt-4 grid gap-2 sm:grid-cols-2">
                 <button
-                  className="rounded-full border border-slate-700 px-3 py-1 text-xs uppercase tracking-widest"
+                  className="rounded-full border border-slate-700 px-3 py-2 text-xs uppercase tracking-widest"
                   onClick={() => enqueueProcessing(selectedDataset.id)}
                   disabled={busy}
                 >
-                  Run Async
+                  Queue Validation
                 </button>
                 <button
-                  className="rounded-full border border-slate-700 px-3 py-1 text-xs uppercase tracking-widest"
-                  onClick={() => fetchReport(selectedDataset.id)}
-                  disabled={busy}
-                >
-                  Refresh Report
-                </button>
-                <button
-                  className="rounded-full border border-slate-700 px-3 py-1 text-xs uppercase tracking-widest"
+                  className="rounded-full border border-slate-700 px-3 py-2 text-xs uppercase tracking-widest"
                   onClick={() => runExplain(selectedDataset.id)}
                   disabled={busy}
                 >
-                  Generate LLM Summary
+                  Generate Explainability
                 </button>
                 <button
-                  className="rounded-full border border-slate-700 px-3 py-1 text-xs uppercase tracking-widest"
+                  className="rounded-full border border-slate-700 px-3 py-2 text-xs uppercase tracking-widest"
                   onClick={() => runCleaning(selectedDataset.id)}
                   disabled={busy}
                 >
-                  Run Cleaning
+                  Queue Cleaning
                 </button>
                 <button
-                  className="rounded-full border border-slate-700 px-3 py-1 text-xs uppercase tracking-widest"
+                  className="rounded-full border border-slate-700 px-3 py-2 text-xs uppercase tracking-widest"
                   onClick={() => downloadCleaned(selectedDataset.id)}
                   disabled={busy}
                 >
@@ -453,17 +664,84 @@ export default function App() {
                 </button>
               </div>
             )}
+            {cleaningJob && (
+              <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950/40 px-4 py-3 text-xs text-slate-300">
+                <p className="uppercase tracking-widest text-slate-400">Cleaning job</p>
+                <p className="mt-2">Status: {cleaningJob.status}</p>
+                <p>Queued: {formatDate(cleaningJob.created_at)}</p>
+                <p>Completed: {formatDate(cleaningJob.completed_at)}</p>
+              </div>
+            )}
           </div>
 
           <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
-            <h2 className="text-lg font-semibold">Latest Report</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold">Quality Report</h2>
+              {selectedDataset && (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    className="rounded-full border border-slate-700 px-3 py-1 text-xs uppercase tracking-widest"
+                    onClick={() => downloadReport(selectedDataset.id, "json")}
+                    disabled={busy}
+                  >
+                    Export JSON
+                  </button>
+                  <button
+                    className="rounded-full border border-slate-700 px-3 py-1 text-xs uppercase tracking-widest"
+                    onClick={() => downloadReport(selectedDataset.id, "csv")}
+                    disabled={busy}
+                  >
+                    Export CSV
+                  </button>
+                </div>
+              )}
+            </div>
             {!report && <p className="mt-3 text-sm text-slate-400">Select a dataset to view its report.</p>}
             {report && (
-              <div className="mt-4 space-y-4 text-sm">
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-400">Quality Score</span>
-                  <span className="text-2xl font-semibold text-emerald-200">{report.quality_score}</span>
+              <div className="mt-4 space-y-6 text-sm">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+                    <p className="text-xs uppercase tracking-widest text-slate-400">Quality Score</p>
+                    <div className="mt-2 flex items-center justify-between">
+                      <span className={`text-3xl font-semibold ${scoreTone}`}>{report.quality_score}</span>
+                      <span className="text-xs text-slate-400">Issue count: {report.issues_json.length}</span>
+                    </div>
+                    <div className="mt-3 h-2 w-full rounded-full bg-slate-800">
+                      <div
+                        className="h-2 rounded-full bg-emerald-400/70"
+                        style={{ width: `${report.quality_score}%` }}
+                      />
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+                    <p className="text-xs uppercase tracking-widest text-slate-400">Dataset Profile</p>
+                    <div className="mt-2 space-y-1 text-sm text-slate-200">
+                      <p>Rows: {report.profile_json?.rows ?? "--"}</p>
+                      <p>Columns: {report.profile_json?.columns?.length ?? "--"}</p>
+                      <p>Duplicates: {report.profile_json?.duplicates ?? "--"}</p>
+                    </div>
+                  </div>
                 </div>
+
+                <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+                  <p className="text-xs uppercase tracking-widest text-slate-400">Issue Breakdown</p>
+                  {issueCounts.length === 0 && (
+                    <p className="mt-3 text-sm text-slate-400">No issues detected.</p>
+                  )}
+                  {issueCounts.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {issueCounts.map(([type, count]) => (
+                        <span
+                          key={type}
+                          className="rounded-full border border-slate-700 bg-slate-900/60 px-3 py-1 text-xs uppercase tracking-widest text-slate-200"
+                        >
+                          {type} · {count}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 <div>
                   <p className="text-xs uppercase tracking-widest text-slate-400">Issues</p>
                   <ul className="mt-2 space-y-2">
@@ -475,24 +753,38 @@ export default function App() {
                     ))}
                   </ul>
                 </div>
-                {report.llm_summary && (
-                  <div>
-                    <p className="text-xs uppercase tracking-widest text-slate-400">LLM Summary</p>
-                    <p className="mt-2 rounded-xl border border-slate-800 bg-slate-950/40 px-3 py-2 text-slate-200">
-                      {report.llm_summary}
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+                    <p className="text-xs uppercase tracking-widest text-slate-400">Explainability</p>
+                    <p className="mt-3 text-sm text-slate-200">
+                      {report.llm_summary || "Generate a summary to explain the risks and recommended fixes."}
                     </p>
                   </div>
-                )}
-                {report.cleaning_plan_json && (
-                  <div>
+                  <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
                     <p className="text-xs uppercase tracking-widest text-slate-400">Cleaning Plan</p>
-                    <pre className="mt-2 whitespace-pre-wrap rounded-xl border border-slate-800 bg-slate-950/40 px-3 py-2 text-xs text-slate-200">
-                      {JSON.stringify(report.cleaning_plan_json, null, 2)}
-                    </pre>
+                    {planSteps.length === 0 && (
+                      <p className="mt-3 text-sm text-slate-400">No plan yet. Generate explainability to create one.</p>
+                    )}
+                    {planSteps.length > 0 && (
+                      <div className="mt-3 space-y-2 text-sm text-slate-200">
+                        {planSteps.map((step, idx) => (
+                          <div key={idx} className="rounded-xl border border-slate-800 bg-slate-900/50 px-3 py-2">
+                            <p className="font-medium">{step.action}</p>
+                            <p className="text-xs text-slate-400">{step.details}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                )}
+                </div>
               </div>
             )}
+          </div>
+
+          <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+            <h2 className="text-lg font-semibold">Null Distribution</h2>
+            <div className="mt-4">{renderNullChart()}</div>
           </div>
         </section>
       </main>

@@ -7,6 +7,7 @@ import app.models  # noqa: F401
 from app.api.routes.health import router as health_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.datasets import router as datasets_router
+from app.api.routes.users import router as users_router
 from app.core.config import get_settings
 from app.utils.files import ensure_dir
 
@@ -24,6 +25,7 @@ app.add_middleware(
 
 app.include_router(health_router)
 app.include_router(auth_router)
+app.include_router(users_router)
 app.include_router(datasets_router)
 
 

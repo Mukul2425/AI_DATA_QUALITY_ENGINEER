@@ -1,8 +1,10 @@
+import csv
+import io
 import os
 from datetime import datetime, timezone
 from uuid import UUID
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db
@@ -15,7 +17,7 @@ from app.schemas.dataset import DatasetOut, ValidationResultOut
 from app.services.cleaning import apply_cleaning_plan
 from app.services.llm import generate_cleaning_plan, summarize_issues
 from app.services.processing import run_validation
-from app.tasks.jobs import process_dataset_task
+from app.tasks.jobs import clean_dataset_task, process_dataset_task
 from app.utils.files import save_upload_file
 
 settings = get_settings()
@@ -263,6 +265,29 @@ def clean_dataset(
     return job
 
 
+@router.post("/{dataset_id}/clean-async", response_model=CleaningJobOut)
+def clean_dataset_async(
+    dataset_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    dataset = (
+        db.query(Dataset)
+        .filter(Dataset.id == dataset_id, Dataset.owner_id == current_user.id)
+        .first()
+    )
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    job = CleaningJob(dataset_id=dataset.id, status="queued")
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    clean_dataset_task.delay(str(job.id))
+    return job
+
+
 @router.get("/{dataset_id}/cleaning-latest", response_model=CleaningJobOut)
 def get_latest_cleaning_job(
     dataset_id: UUID,
@@ -280,7 +305,7 @@ def get_latest_cleaning_job(
     job = (
         db.query(CleaningJob)
         .filter(CleaningJob.dataset_id == dataset.id)
-        .order_by(CleaningJob.completed_at.desc().nullslast())
+        .order_by(CleaningJob.created_at.desc())
         .first()
     )
     if not job:
@@ -338,3 +363,58 @@ def get_latest_report(
     if not result:
         raise HTTPException(status_code=404, detail="No report found")
     return result
+
+
+@router.get("/{dataset_id}/report.json")
+def download_report_json(
+    dataset_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    result = get_latest_report(dataset_id, db, current_user)
+    content = {
+        "dataset_id": str(result.dataset_id),
+        "quality_score": result.quality_score,
+        "issues": result.issues_json,
+        "profile": result.profile_json,
+        "llm_summary": result.llm_summary,
+        "cleaning_plan": result.cleaning_plan_json,
+        "created_at": result.created_at.isoformat(),
+    }
+    return JSONResponse(
+        content=content,
+        headers={"Content-Disposition": f"attachment; filename=report-{dataset_id}.json"},
+    )
+
+
+@router.get("/{dataset_id}/report.csv")
+def download_report_csv(
+    dataset_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    result = get_latest_report(dataset_id, db, current_user)
+
+    output = io.StringIO()
+    writer = csv.DictWriter(
+        output,
+        fieldnames=["type", "message", "column", "count", "null_pct"],
+    )
+    writer.writeheader()
+
+    issues = result.issues_json or []
+    if not issues:
+        writer.writerow({"type": "none", "message": "No issues detected"})
+    else:
+        for issue in issues:
+            writer.writerow({
+                "type": issue.get("type"),
+                "message": issue.get("message"),
+                "column": issue.get("column"),
+                "count": issue.get("count"),
+                "null_pct": issue.get("null_pct"),
+            })
+
+    output.seek(0)
+    headers = {"Content-Disposition": f"attachment; filename=report-{dataset_id}.csv"}
+    return StreamingResponse(output, media_type="text/csv", headers=headers)
