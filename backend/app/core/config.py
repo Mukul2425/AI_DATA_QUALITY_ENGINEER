@@ -1,4 +1,6 @@
 from functools import lru_cache
+from typing import Optional
+
 from pydantic_settings import BaseSettings
 
 
@@ -19,7 +21,7 @@ class Settings(BaseSettings):
     cleaned_dir: str = "/app/cleaned"
 
     llm_provider: str = "gemini"
-    gemini_api_key: str | None = None
+    gemini_api_key: Optional[str] = None
     gemini_model: str = "gemini-2.0-flash"
     gemini_fallback_model: str = "gemini-1.5-flash"
 
