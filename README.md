@@ -51,6 +51,8 @@ A production-grade GenAI data quality platform that profiles datasets, runs rule
   - `GET /datasets/{id}/report`
   - `GET /datasets/{id}/report.json`
   - `GET /datasets/{id}/report.csv`
+  - `GET /datasets/{id}/preview`
+  - `GET /datasets/{id}/history`
 - Users
   - `GET /users/me`
   - `PUT /users/me`

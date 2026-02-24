@@ -26,3 +26,18 @@ class ValidationResultOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class ValidationHistoryOut(BaseModel):
+    id: UUID
+    quality_score: int
+    issues_count: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class DatasetPreviewOut(BaseModel):
+    columns: list[str]
+    rows: list[dict]

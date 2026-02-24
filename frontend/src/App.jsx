@@ -49,6 +49,8 @@ export default function App() {
   const [datasets, setDatasets] = useState([]);
   const [selectedId, setSelectedId] = useState("");
   const [report, setReport] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [history, setHistory] = useState([]);
   const [cleaningJob, setCleaningJob] = useState(null);
   const [me, setMe] = useState(null);
   const [profileForm, setProfileForm] = useState({ full_name: "", organization: "" });
@@ -87,12 +89,35 @@ export default function App() {
       .slice(0, 6);
   }, [report]);
 
+  const columnCards = useMemo(() => {
+    const dtypes = report?.profile_json?.dtypes || {};
+    const nullPct = report?.profile_json?.null_pct || {};
+    return Object.keys(dtypes)
+      .map((col) => ({
+        col,
+        dtype: dtypes[col],
+        nulls: Math.round((nullPct[col] || 0) * 100)
+      }))
+      .sort((a, b) => b.nulls - a.nulls)
+      .slice(0, 8);
+  }, [report]);
+
   const planSteps = useMemo(() => {
     const plan = report?.cleaning_plan_json;
     if (!plan) return [];
     if (Array.isArray(plan.steps)) return plan.steps;
     return [];
   }, [report]);
+
+  const scoreDelta = useMemo(() => {
+    if (history.length < 2) return null;
+    return history[history.length - 1].quality_score - history[history.length - 2].quality_score;
+  }, [history]);
+
+  const issueDelta = useMemo(() => {
+    if (history.length < 2) return null;
+    return history[history.length - 1].issues_count - history[history.length - 2].issues_count;
+  }, [history]);
 
   useEffect(() => {
     if (!token) return;
@@ -104,6 +129,8 @@ export default function App() {
     if (!token || !selectedId) return;
     fetchReport(selectedId);
     fetchCleaningJob(selectedId);
+    fetchPreview(selectedId);
+    fetchHistory(selectedId);
   }, [token, selectedId]);
 
   useEffect(() => {
@@ -113,6 +140,7 @@ export default function App() {
       if (selectedId) {
         fetchReport(selectedId);
         fetchCleaningJob(selectedId);
+        fetchHistory(selectedId);
       }
     }, 8000);
     return () => clearInterval(interval);
@@ -125,7 +153,7 @@ export default function App() {
       if (data.length && !selectedId) {
         setSelectedId(data[0].id);
       }
-      if (!data.find((item) => item.id === selectedId)) {
+      if (selectedId && !data.find((item) => item.id === selectedId)) {
         setSelectedId(data[0]?.id || "");
       }
     } catch (err) {
@@ -194,6 +222,8 @@ export default function App() {
     setDatasets([]);
     setSelectedId("");
     setReport(null);
+    setPreview(null);
+    setHistory([]);
     setMe(null);
   }
 
@@ -246,8 +276,28 @@ export default function App() {
     try {
       const data = await apiRequest(`/datasets/${datasetId}/report`, { token });
       setReport(data);
-    } catch (err) {
+    } catch {
       setReport(null);
+    }
+  }
+
+  async function fetchPreview(datasetId) {
+    if (!datasetId) return;
+    try {
+      const data = await apiRequest(`/datasets/${datasetId}/preview?limit=6`, { token });
+      setPreview(data);
+    } catch {
+      setPreview(null);
+    }
+  }
+
+  async function fetchHistory(datasetId) {
+    if (!datasetId) return;
+    try {
+      const data = await apiRequest(`/datasets/${datasetId}/history?limit=8`, { token });
+      setHistory(data);
+    } catch {
+      setHistory([]);
     }
   }
 
@@ -387,6 +437,28 @@ export default function App() {
     );
   }
 
+  function renderTrendBars(items, key, maxValue = 100) {
+    if (!items.length) {
+      return <p className="text-sm text-slate-400">No trend data yet.</p>;
+    }
+    const normalizedMax = Math.max(maxValue, ...items.map((item) => item[key]));
+    return (
+      <div className="flex items-end gap-2">
+        {items.map((item) => (
+          <div key={item.id} className="flex flex-col items-center gap-1">
+            <div className="h-24 w-3 rounded-full bg-slate-800">
+              <div
+                className="w-3 rounded-full bg-emerald-400/70"
+                style={{ height: `${Math.max(10, (item[key] / normalizedMax) * 96)}px` }}
+              />
+            </div>
+            <span className="text-[10px] text-slate-400">{item[key]}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
   const qualityScore = report?.quality_score ?? null;
   const scoreTone = qualityScore === null
     ? "text-slate-400"
@@ -400,8 +472,8 @@ export default function App() {
     <div className="min-h-screen bg-grid text-slate-100">
       <header className="mx-auto max-w-7xl px-6 pt-10">
         <div className="relative overflow-hidden rounded-[36px] border border-slate-800 bg-slate-900/60 p-10">
-          <div className="absolute -top-10 right-0 h-44 w-44 rounded-full bg-emerald-400/20 blur-3xl" />
-          <div className="absolute -bottom-16 left-6 h-48 w-48 rounded-full bg-sky-400/10 blur-3xl" />
+          <div className="absolute -top-10 right-0 h-44 w-44 rounded-full bg-emerald-400/20 blur-3xl animate-float" />
+          <div className="absolute -bottom-16 left-6 h-48 w-48 rounded-full bg-sky-400/10 blur-3xl animate-float-slow" />
           <p className="text-xs uppercase tracking-[0.35em] text-emerald-300/80">AI Data Quality Engineer</p>
           <h1 className="mt-4 text-4xl font-semibold leading-tight md:text-5xl">
             Data quality control room for revenue-critical pipelines
@@ -426,22 +498,22 @@ export default function App() {
       </header>
 
       <section className="mx-auto grid max-w-7xl gap-4 px-6 py-8 md:grid-cols-2 xl:grid-cols-4">
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 animate-rise">
           <p className="text-xs uppercase tracking-widest text-slate-400">Datasets</p>
           <p className="mt-3 text-3xl font-semibold text-emerald-200">{stats.total}</p>
           <p className="mt-1 text-xs text-slate-400">Tracked in your workspace</p>
         </div>
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 animate-rise">
           <p className="text-xs uppercase tracking-widest text-slate-400">Processing</p>
           <p className="mt-3 text-3xl font-semibold text-amber-200">{stats.processing}</p>
           <p className="mt-1 text-xs text-slate-400">Async jobs running</p>
         </div>
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 animate-rise">
           <p className="text-xs uppercase tracking-widest text-slate-400">Failed</p>
           <p className="mt-3 text-3xl font-semibold text-rose-200">{stats.failed}</p>
           <p className="mt-1 text-xs text-slate-400">Needs attention</p>
         </div>
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5">
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 animate-rise">
           <p className="text-xs uppercase tracking-widest text-slate-400">Latest Score</p>
           <p className={`mt-3 text-3xl font-semibold ${scoreTone}`}>{stats.latestScore}</p>
           <p className="mt-1 text-xs text-slate-400">Quality index</p>
@@ -450,7 +522,7 @@ export default function App() {
 
       <main className="mx-auto grid max-w-7xl gap-8 px-6 pb-16 xl:grid-cols-[1fr,1.5fr]">
         <section className="space-y-6">
-          <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+          <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6 animate-rise">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold">Operator Access</h2>
               {token && (
@@ -515,7 +587,7 @@ export default function App() {
           </div>
 
           {token && (
-            <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+            <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6 animate-rise">
               <h2 className="text-lg font-semibold">Profile</h2>
               <form onSubmit={handleProfileSave} className="mt-4 space-y-3">
                 <input
@@ -548,7 +620,7 @@ export default function App() {
             </div>
           )}
 
-          <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+          <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6 animate-rise">
             <h2 className="text-lg font-semibold">Ingest Dataset</h2>
             <p className="mt-2 text-sm text-slate-400">CSV only. Run validation now or queue async.</p>
             <form onSubmit={handleUpload} className="mt-4 space-y-4">
@@ -576,7 +648,7 @@ export default function App() {
             </form>
           </div>
 
-          <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+          <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6 animate-rise">
             <h2 className="text-lg font-semibold">Operational Runbook</h2>
             <p className="mt-2 text-sm text-slate-400">
               Recommended flow for a complete quality cycle.
@@ -597,7 +669,7 @@ export default function App() {
         </section>
 
         <section className="space-y-6">
-          <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+          <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6 animate-rise">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold">Dataset Control</h2>
               <button
@@ -674,7 +746,26 @@ export default function App() {
             )}
           </div>
 
-          <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
+          <div className="grid gap-6 lg:grid-cols-2">
+            <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6 animate-rise">
+              <h2 className="text-lg font-semibold">Score Trend</h2>
+              <p className="mt-2 text-xs uppercase tracking-widest text-slate-400">Last validations</p>
+              <div className="mt-4">{renderTrendBars(history, "quality_score", 100)}</div>
+              <p className="mt-3 text-xs text-slate-400">
+                Delta: {scoreDelta === null ? "--" : scoreDelta > 0 ? `+${scoreDelta}` : scoreDelta}
+              </p>
+            </div>
+            <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6 animate-rise">
+              <h2 className="text-lg font-semibold">Issue Volume</h2>
+              <p className="mt-2 text-xs uppercase tracking-widest text-slate-400">Last validations</p>
+              <div className="mt-4">{renderTrendBars(history, "issues_count", 12)}</div>
+              <p className="mt-3 text-xs text-slate-400">
+                Delta: {issueDelta === null ? "--" : issueDelta > 0 ? `+${issueDelta}` : issueDelta}
+              </p>
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6 animate-rise">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold">Quality Report</h2>
               {selectedDataset && (
@@ -742,19 +833,7 @@ export default function App() {
                   )}
                 </div>
 
-                <div>
-                  <p className="text-xs uppercase tracking-widest text-slate-400">Issues</p>
-                  <ul className="mt-2 space-y-2">
-                    {report.issues_json.map((issue, index) => (
-                      <li key={index} className="rounded-xl border border-slate-800 bg-slate-950/40 px-3 py-2">
-                        <p className="font-medium text-slate-200">{issue.type}</p>
-                        <p className="text-xs text-slate-400">{issue.message}</p>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-
-                <div className="grid gap-4 md:grid-cols-2">
+                <div className="grid gap-4 lg:grid-cols-2">
                   <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
                     <p className="text-xs uppercase tracking-widest text-slate-400">Explainability</p>
                     <p className="mt-3 text-sm text-slate-200">
@@ -782,9 +861,59 @@ export default function App() {
             )}
           </div>
 
-          <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
-            <h2 className="text-lg font-semibold">Null Distribution</h2>
-            <div className="mt-4">{renderNullChart()}</div>
+          <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6 animate-rise">
+            <h2 className="text-lg font-semibold">Column Health</h2>
+            {columnCards.length === 0 && (
+              <p className="mt-3 text-sm text-slate-400">No column profile available yet.</p>
+            )}
+            {columnCards.length > 0 && (
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {columnCards.map((card) => (
+                  <div key={card.col} className="rounded-2xl border border-slate-800 bg-slate-950/40 p-3">
+                    <p className="text-sm font-medium text-slate-200">{card.col}</p>
+                    <p className="text-xs text-slate-400">Type: {card.dtype}</p>
+                    <p className="text-xs text-slate-400">Nulls: {card.nulls}%</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6 animate-rise">
+              <h2 className="text-lg font-semibold">Null Distribution</h2>
+              <div className="mt-4">{renderNullChart()}</div>
+            </div>
+            <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6 animate-rise">
+              <h2 className="text-lg font-semibold">Dataset Preview</h2>
+              {!preview && <p className="mt-3 text-sm text-slate-400">Upload and select a dataset to preview rows.</p>}
+              {preview && (
+                <div className="mt-4 overflow-x-auto rounded-2xl border border-slate-800 bg-slate-950/40">
+                  <table className="w-full text-xs text-slate-200">
+                    <thead className="bg-slate-900/60 text-[11px] uppercase tracking-widest text-slate-400">
+                      <tr>
+                        {preview.columns.map((col) => (
+                          <th key={col} className="px-3 py-2 text-left">
+                            {col}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {preview.rows.map((row, idx) => (
+                        <tr key={idx} className="border-t border-slate-800">
+                          {preview.columns.map((col) => (
+                            <td key={col} className="px-3 py-2">
+                              {row[col] ?? "--"}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
         </section>
       </main>

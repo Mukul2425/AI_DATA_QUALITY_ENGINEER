@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+import pandas as pd
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db
@@ -13,7 +14,7 @@ from app.models.cleaning_job import CleaningJob
 from app.models.dataset import Dataset
 from app.models.validation_result import ValidationResult
 from app.schemas.cleaning import CleaningJobOut
-from app.schemas.dataset import DatasetOut, ValidationResultOut
+from app.schemas.dataset import DatasetOut, DatasetPreviewOut, ValidationHistoryOut, ValidationResultOut
 from app.services.cleaning import apply_cleaning_plan
 from app.services.llm import generate_cleaning_plan, summarize_issues
 from app.services.processing import run_validation
@@ -418,3 +419,60 @@ def download_report_csv(
     output.seek(0)
     headers = {"Content-Disposition": f"attachment; filename=report-{dataset_id}.csv"}
     return StreamingResponse(output, media_type="text/csv", headers=headers)
+
+
+@router.get("/{dataset_id}/preview", response_model=DatasetPreviewOut)
+def preview_dataset(
+    dataset_id: UUID,
+    limit: int = 5,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    dataset = (
+        db.query(Dataset)
+        .filter(Dataset.id == dataset_id, Dataset.owner_id == current_user.id)
+        .first()
+    )
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    if not os.path.exists(dataset.file_path):
+        raise HTTPException(status_code=404, detail="Dataset file missing")
+
+    safe_limit = max(1, min(limit, 20))
+    df = pd.read_csv(dataset.file_path, nrows=safe_limit)
+    return DatasetPreviewOut(columns=df.columns.tolist(), rows=df.to_dict(orient="records"))
+
+
+@router.get("/{dataset_id}/history", response_model=list[ValidationHistoryOut])
+def get_dataset_history(
+    dataset_id: UUID,
+    limit: int = 12,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    dataset = (
+        db.query(Dataset)
+        .filter(Dataset.id == dataset_id, Dataset.owner_id == current_user.id)
+        .first()
+    )
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    safe_limit = max(1, min(limit, 50))
+    results = (
+        db.query(ValidationResult)
+        .filter(ValidationResult.dataset_id == dataset.id)
+        .order_by(ValidationResult.created_at.desc())
+        .limit(safe_limit)
+        .all()
+    )
+    history = [
+        ValidationHistoryOut(
+            id=item.id,
+            quality_score=item.quality_score,
+            issues_count=len(item.issues_json or []),
+            created_at=item.created_at,
+        )
+        for item in reversed(results)
+    ]
+    return history
