@@ -76,6 +76,12 @@ export default function App() {
     return { total, processing, failed, latestScore };
   }, [datasets, report]);
 
+  const recentDatasets = useMemo(() => {
+    return [...datasets]
+      .sort((a, b) => new Date(b.upload_time).getTime() - new Date(a.upload_time).getTime())
+      .slice(0, 5);
+  }, [datasets]);
+
   const issueCounts = useMemo(() => {
     const issues = report?.issues_json || [];
     const counts = {};
@@ -747,6 +753,27 @@ export default function App() {
               <li>3. Queue cleaning and download the output.</li>
               <li>4. Share the JSON/CSV report with stakeholders.</li>
             </ol>
+          </div>
+
+          <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6 animate-rise">
+            <h2 className="text-lg font-semibold">Workspace Pulse</h2>
+            <p className="mt-2 text-sm text-slate-400">Recent dataset activity.</p>
+            <div className="mt-4 space-y-3 text-sm">
+              {recentDatasets.length === 0 && (
+                <p className="text-sm text-slate-400">No activity yet.</p>
+              )}
+              {recentDatasets.map((dataset) => (
+                <div key={dataset.id} className="flex items-center justify-between rounded-2xl border border-slate-800 bg-slate-950/40 px-3 py-2">
+                  <div>
+                    <p className="text-sm text-slate-200">{dataset.filename}</p>
+                    <p className="text-xs text-slate-400">{formatDate(dataset.upload_time)}</p>
+                  </div>
+                  <span className={`rounded-full border px-3 py-1 text-xs uppercase tracking-widest ${statusBadge(dataset.status)}`}>
+                    {dataset.status}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
 
           {status && (
