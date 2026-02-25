@@ -49,6 +49,8 @@ export default function App() {
   const [datasets, setDatasets] = useState([]);
   const [selectedId, setSelectedId] = useState("");
   const [report, setReport] = useState(null);
+  const [compareId, setCompareId] = useState("");
+  const [compareReport, setCompareReport] = useState(null);
   const [preview, setPreview] = useState(null);
   const [history, setHistory] = useState([]);
   const [cleaningJob, setCleaningJob] = useState(null);
@@ -132,6 +134,25 @@ export default function App() {
     fetchPreview(selectedId);
     fetchHistory(selectedId);
   }, [token, selectedId]);
+
+  useEffect(() => {
+    if (!datasets.length) {
+      setCompareId("");
+      return;
+    }
+    if (!compareId || compareId === selectedId) {
+      const candidate = datasets.find((item) => item.id !== selectedId);
+      setCompareId(candidate?.id || "");
+    }
+  }, [datasets, selectedId, compareId]);
+
+  useEffect(() => {
+    if (!token || !compareId) {
+      setCompareReport(null);
+      return;
+    }
+    fetchCompareReport(compareId);
+  }, [token, compareId]);
 
   useEffect(() => {
     if (!token) return;
@@ -278,6 +299,16 @@ export default function App() {
       setReport(data);
     } catch {
       setReport(null);
+    }
+  }
+
+  async function fetchCompareReport(datasetId) {
+    if (!datasetId) return;
+    try {
+      const data = await apiRequest(`/datasets/${datasetId}/report`, { token });
+      setCompareReport(data);
+    } catch {
+      setCompareReport(null);
     }
   }
 
@@ -862,6 +893,54 @@ export default function App() {
                         ))}
                       </div>
                     )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6 animate-rise">
+            <div className="flex items-center justify-between gap-4">
+              <h2 className="text-lg font-semibold">Dataset Comparison</h2>
+              {datasets.length > 1 && (
+                <select
+                  value={compareId}
+                  onChange={(event) => setCompareId(event.target.value)}
+                  className="rounded-full border border-slate-700 bg-slate-950/60 px-3 py-1 text-xs uppercase tracking-widest text-slate-200"
+                >
+                  {datasets
+                    .filter((item) => item.id !== selectedId)
+                    .map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.filename}
+                      </option>
+                    ))}
+                </select>
+              )}
+            </div>
+            {datasets.length <= 1 && (
+              <p className="mt-3 text-sm text-slate-400">Upload at least two datasets to compare.</p>
+            )}
+            {datasets.length > 1 && (
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+                  <p className="text-xs uppercase tracking-widest text-slate-400">Primary</p>
+                  <p className="mt-2 text-sm text-slate-200">{selectedDataset?.filename || "--"}</p>
+                  <div className="mt-3 space-y-1 text-xs text-slate-300">
+                    <p>Score: {report?.quality_score ?? "--"}</p>
+                    <p>Issues: {report?.issues_json?.length ?? "--"}</p>
+                    <p>Rows: {report?.profile_json?.rows ?? "--"}</p>
+                    <p>Duplicates: {report?.profile_json?.duplicates ?? "--"}</p>
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-4">
+                  <p className="text-xs uppercase tracking-widest text-slate-400">Comparison</p>
+                  <p className="mt-2 text-sm text-slate-200">{datasets.find((item) => item.id === compareId)?.filename || "--"}</p>
+                  <div className="mt-3 space-y-1 text-xs text-slate-300">
+                    <p>Score: {compareReport?.quality_score ?? "--"}</p>
+                    <p>Issues: {compareReport?.issues_json?.length ?? "--"}</p>
+                    <p>Rows: {compareReport?.profile_json?.rows ?? "--"}</p>
+                    <p>Duplicates: {compareReport?.profile_json?.duplicates ?? "--"}</p>
                   </div>
                 </div>
               </div>
