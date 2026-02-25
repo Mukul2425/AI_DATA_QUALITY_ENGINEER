@@ -60,6 +60,8 @@ export default function App() {
   const [file, setFile] = useState(null);
   const [uploadAsync, setUploadAsync] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [showTour, setShowTour] = useState(false);
+  const [tourStep, setTourStep] = useState(0);
 
   const selectedDataset = useMemo(
     () => datasets.find((item) => item.id === selectedId),
@@ -126,6 +128,14 @@ export default function App() {
     loadDatasets();
     loadMe();
   }, [token]);
+
+  useEffect(() => {
+    const seen = localStorage.getItem("dq_tour_done");
+    if (!seen) {
+      setShowTour(true);
+      setTourStep(0);
+    }
+  }, []);
 
   useEffect(() => {
     if (!token || !selectedId) return;
@@ -440,6 +450,47 @@ export default function App() {
     }
   }
 
+  const tourSteps = [
+    {
+      title: "Welcome to the Control Room",
+      body: "This workspace lets you validate CSVs, surface risks, and ship safe cleaning actions."
+    },
+    {
+      title: "Upload + Validate",
+      body: "Drop a CSV in the Ingest panel. Choose async if you want Celery to process it in the background."
+    },
+    {
+      title: "Explain + Clean",
+      body: "Generate explainability to get a summary and cleaning plan. Queue cleaning to auto-fix issues."
+    },
+    {
+      title: "Share Results",
+      body: "Export JSON, CSV, or PDF reports and compare dataset versions in the comparison card."
+    }
+  ];
+
+  function startTour() {
+    setTourStep(0);
+    setShowTour(true);
+  }
+
+  function closeTour() {
+    localStorage.setItem("dq_tour_done", "1");
+    setShowTour(false);
+  }
+
+  function nextTour() {
+    if (tourStep >= tourSteps.length - 1) {
+      closeTour();
+      return;
+    }
+    setTourStep((prev) => prev + 1);
+  }
+
+  function prevTour() {
+    setTourStep((prev) => Math.max(0, prev - 1));
+  }
+
   function renderNullChart() {
     if (!topNulls.length) {
       return <p className="text-sm text-slate-400">No profiling data available yet.</p>;
@@ -524,6 +575,12 @@ export default function App() {
                 {selectedDataset.status}
               </span>
             )}
+            <button
+              onClick={startTour}
+              className="rounded-full border border-slate-700 bg-slate-950/40 px-4 py-2 text-xs uppercase tracking-widest text-slate-200"
+            >
+              Launch Tour
+            </button>
           </div>
         </div>
       </header>
@@ -1003,6 +1060,40 @@ export default function App() {
           </div>
         </section>
       </main>
+
+      {showTour && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 px-6">
+          <div className="w-full max-w-lg rounded-3xl border border-slate-800 bg-slate-900 p-6 text-slate-100 shadow-2xl">
+            <p className="text-xs uppercase tracking-widest text-emerald-300">Guided Tour</p>
+            <h3 className="mt-3 text-2xl font-semibold">{tourSteps[tourStep].title}</h3>
+            <p className="mt-3 text-sm text-slate-300">{tourSteps[tourStep].body}</p>
+            <div className="mt-6 flex items-center justify-between">
+              <button
+                className="rounded-full border border-slate-700 px-4 py-2 text-xs uppercase tracking-widest text-slate-200"
+                onClick={prevTour}
+                disabled={tourStep === 0}
+              >
+                Back
+              </button>
+              <div className="text-xs uppercase tracking-widest text-slate-400">
+                Step {tourStep + 1} of {tourSteps.length}
+              </div>
+              <button
+                className="rounded-full bg-emerald-400/20 px-4 py-2 text-xs uppercase tracking-widest text-emerald-200"
+                onClick={nextTour}
+              >
+                {tourStep === tourSteps.length - 1 ? "Finish" : "Next"}
+              </button>
+            </div>
+            <button
+              onClick={closeTour}
+              className="mt-4 w-full rounded-full border border-slate-800 px-4 py-2 text-xs uppercase tracking-widest text-slate-300"
+            >
+              Skip Tour
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
