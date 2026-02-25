@@ -6,6 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 import pandas as pd
+from fpdf import FPDF
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, get_db
@@ -419,6 +420,67 @@ def download_report_csv(
     output.seek(0)
     headers = {"Content-Disposition": f"attachment; filename=report-{dataset_id}.csv"}
     return StreamingResponse(output, media_type="text/csv", headers=headers)
+
+
+@router.get("/{dataset_id}/report.pdf")
+def download_report_pdf(
+    dataset_id: UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    result = get_latest_report(dataset_id, db, current_user)
+
+    dataset = (
+        db.query(Dataset)
+        .filter(Dataset.id == dataset_id, Dataset.owner_id == current_user.id)
+        .first()
+    )
+
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=12)
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 10, "Data Quality Report", ln=True)
+
+    pdf.set_font("Helvetica", size=11)
+    pdf.cell(0, 8, f"Dataset: {dataset.filename if dataset else dataset_id}", ln=True)
+    pdf.cell(0, 8, f"Created at: {result.created_at.isoformat()}", ln=True)
+    pdf.cell(0, 8, f"Quality score: {result.quality_score}", ln=True)
+    pdf.cell(0, 8, f"Issues count: {len(result.issues_json or [])}", ln=True)
+    pdf.ln(4)
+
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "Summary", ln=True)
+    pdf.set_font("Helvetica", size=10)
+    summary = result.llm_summary or "No LLM summary available."
+    pdf.multi_cell(0, 6, summary)
+    pdf.ln(2)
+
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "Issues", ln=True)
+    pdf.set_font("Helvetica", size=10)
+    if not result.issues_json:
+        pdf.multi_cell(0, 6, "No issues detected.")
+    else:
+        for issue in result.issues_json[:25]:
+            line = f"- {issue.get('type', 'issue')}: {issue.get('message', '')}"
+            pdf.multi_cell(0, 6, line)
+    pdf.ln(2)
+
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "Cleaning Plan", ln=True)
+    pdf.set_font("Helvetica", size=10)
+    plan = result.cleaning_plan_json or {}
+    steps = plan.get("steps", []) if isinstance(plan, dict) else []
+    if not steps:
+        pdf.multi_cell(0, 6, "No cleaning plan available.")
+    else:
+        for step in steps[:20]:
+            pdf.multi_cell(0, 6, f"- {step.get('action')}: {step.get('details')}")
+
+    pdf_bytes = pdf.output(dest="S").encode("latin-1")
+    headers = {"Content-Disposition": f"attachment; filename=report-{dataset_id}.pdf"}
+    return StreamingResponse(io.BytesIO(pdf_bytes), media_type="application/pdf", headers=headers)
 
 
 @router.get("/{dataset_id}/preview", response_model=DatasetPreviewOut)

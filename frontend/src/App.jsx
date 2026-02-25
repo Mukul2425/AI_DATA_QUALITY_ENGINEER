@@ -784,6 +784,13 @@ export default function App() {
                   >
                     Export CSV
                   </button>
+                  <button
+                    className="rounded-full border border-slate-700 px-3 py-1 text-xs uppercase tracking-widest"
+                    onClick={() => downloadReport(selectedDataset.id, "pdf")}
+                    disabled={busy}
+                  >
+                    Export PDF
+                  </button>
                 </div>
               )}
             </div>
